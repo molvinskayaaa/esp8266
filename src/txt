@@ -1,0 +1,87 @@
+#include <Arduino.h>
+#include <ph4502c_sensor.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+// Определение пинов
+const uint16_t ph_level_pin = 5;   // Пин для pH
+const uint16_t temp_pin = 4; // Пин для температуры
+const uint16_t ds_temp_pin = 13;
+// Создание экземпляра PH4502C_Sensor
+PH4502C_Sensor ph4502(ph_level_pin, temp_pin);
+OneWire oneWire(ds_temp_pin);
+DallasTemperature DS18B20 (&oneWire);
+
+void setup() {
+    Serial.begin(9600);
+    Serial.println("Starting PH4502C Sensor...");
+
+    // Инициализация экземпляра PH4502
+    ph4502.init();
+}
+
+void loop() {
+    // Чтение уровня pH по среднему значению
+    Serial.println("Считывание данных...");
+    
+    // Чтение pH и температуры с помощью методов экземпляра ph4502
+    float pHValue = ph4502.read_ph_level(); // Используйте метод readPH() экземпляра ph4502
+    float temperatureValue = ph4502.read_temp(); // Используйте метод readTemperature() экземпляра ph4502
+
+    Serial.print("pH Level Reading: ");
+    Serial.println(pHValue);
+    Serial.print("Temperature Reading: ");
+    Serial.println(temperatureValue);
+
+    delay(1000); // Задержка в 1 секунду
+}
+
+
+
+
+#include <Arduino.h>
+#include "ph4502c_sensor.h"
+
+void PH4502C_Sensor::init() {
+    pinMode(this->_ph_level_pin, INPUT);
+    pinMode(this->_temp_pin, INPUT);
+}
+
+void PH4502C_Sensor::recalibrate(float calibration) {
+    this->_calibration = calibration;
+}
+
+float PH4502C_Sensor::read_ph_level() {
+    float reading = 0.0f;
+
+    for(int i = 0; i < this->_reading_count; i++) {
+        reading += analogRead(this->_ph_level_pin);
+        delayMicroseconds(this->_reading_interval);
+    }
+
+    reading = PH4502C_VOLTAGE / this->_adc_resolution * reading;
+    reading /= this->_reading_count;
+    reading = this->_calibration + ((PH4502C_MID_VOLTAGE - reading)) / PH4502C_PH_VOLTAGE_PER_PH;
+
+    return reading;
+}
+
+float PH4502C_Sensor::read_ph_level_single() {
+    float reading = analogRead(this->_ph_level_pin);
+
+    reading = PH4502C_VOLTAGE / this->_adc_resolution * reading;
+    reading /= this->_reading_count;
+
+    return this->_calibration + ((PH4502C_MID_VOLTAGE - reading)) / PH4502C_PH_VOLTAGE_PER_PH;
+}
+
+int PH4502C_Sensor::read_temp() {
+    //return analogRead(this->_temp_pin);
+    int rawValue = analogRead(this->_temp_pin);  // Чтение сырых данных с пина
+    float voltage = rawValue * (5.0 / 1023.0);    // Преобразуем в напряжение (если используете Arduino с 5V)
+    
+    // Пример: Простое преобразование для LM35 (или аналогичного датчика), которое дает 10 мВ на °C
+    float temperatureC = voltage * 100.0; // Преобразуем напряжение в температуру (100mV/°C)
+    
+    return temperatureC;
+}
