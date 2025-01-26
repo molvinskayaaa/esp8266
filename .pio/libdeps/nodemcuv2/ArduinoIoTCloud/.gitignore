@@ -1,0 +1,8 @@
+*.bin
+*.elf
+*~
+.vscode
+*.orig
+.vs
+build
+.idea/

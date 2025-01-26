@@ -1,0 +1,15 @@
+tremaru/iarduino_I2C_pH@^1.2.3
+ArduinoMqttClient
+arduino-libraries/ArduinoIoTCloud@^2.3.0
+gyverlibs/FastBot2@^1.0.12
+paulstoffregen/OneWire@^2.3.8
+tremaru/iarduino_I2C_SHT@^1.0.7
+milesburton/DallasTemperature@^3.11.0
+waspinator/CD74HC4067@^1.0.2
+nthnn/PH4502C-Sensor@^1.1.1
+paulstoffregen/Time@^1.6.1
+gyverlibs/FastBot@^2.27.3
+gianbacchio/ESP8266TelegramBOT@^1.0
+gyverlibs/GyverHTTP@^1.0.23
+robtillaart/DS18B20@^0.2.4
+witnessmenow/UniversalTelegramBot@^1.3.0

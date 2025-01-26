@@ -1,0 +1,22 @@
+#	####################################################
+#	СИНТАКСИЧЕСКАЯ РАСКРАСКА ДЛЯ БИБИЛИОТЕКИ:
+#	iarduino_I2C_SHT
+#	####################################################
+#	ТИПЫ ДАННЫХ:							   (KEYWORD1)
+	iarduino_I2C_SHT	KEYWORD1
+#	####################################################
+#	МЕТОДЫ И ФУНКЦИИ:						   (KEYWORD2)
+	begin	KEYWORD2
+	changeAddress	KEYWORD2
+	reset	KEYWORD2
+	getAddress	KEYWORD2
+	getVersion	KEYWORD2
+	getPullI2C	KEYWORD2
+	setPullI2C	KEYWORD2
+	getTem	KEYWORD2
+	getHum	KEYWORD2
+	getTemChanged	KEYWORD2
+	getHumChanged	KEYWORD2
+	setTemChange	KEYWORD2
+	setHumChange	KEYWORD2
+	setPeriod	KEYWORD2

@@ -1,0 +1,31 @@
+#	####################################################
+#	СИНТАКСИЧЕСКАЯ РАСКРАСКА ДЛЯ БИБИЛИОТЕКИ:
+#	iarduino_I2C_pH
+#	####################################################
+#	ТИПЫ ДАННЫХ:							   (KEYWORD1)
+	iarduino_I2C_pH	KEYWORD1
+#	####################################################
+#	МЕТОДЫ И ФУНКЦИИ:						   (KEYWORD2)
+	begin	KEYWORD2
+	changeAddress	KEYWORD2
+	reset	KEYWORD2
+	getAddress	KEYWORD2
+	getVersion	KEYWORD2
+	getPullI2C	KEYWORD2
+	setPullI2C	KEYWORD2
+	getCalibration	KEYWORD2
+	setCalibration	KEYWORD2
+	getResultCalib	KEYWORD2
+	getStability	KEYWORD2
+	getKnownPH	KEYWORD2
+	setKnownPH	KEYWORD2
+	getKy	KEYWORD2
+	setKy	KEYWORD2
+	getVstp	KEYWORD2
+	setVstp	KEYWORD2
+	getVin	KEYWORD2
+	getVout	KEYWORD2
+	getVn	KEYWORD2
+	getPHn	KEYWORD2
+	setPHn	KEYWORD2
+	getPH	KEYWORD2
