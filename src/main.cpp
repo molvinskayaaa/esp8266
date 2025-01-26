@@ -11,8 +11,8 @@
 
 
 // Определения и инициализация
-#define BOT_TOKEN "7939415831:AAFTq2tiWJpiH3KgoT09Ymhw80G2tbke5Hs"
-#define CHAT_ID "860718018"
+#define BOT_TOKEN "token"
+#define CHAT_ID "id"
 #define ONE_WIRE_BUS 2
 #define TDS_CHANNEL 4
 #define PH_CHANNEL 11
