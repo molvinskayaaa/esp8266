@@ -1,5 +1,4 @@
 #include <OneWire.h>
-#include <ESP8266WiFi.h>
 #include <FastBot2.h>
 #include <math.h>
 #include <GyverHTTP.h>
@@ -8,6 +7,12 @@
 #include <TimeLib.h>
 #include <ArduinoMqttClient.h>
 #include <Arduino_ConnectionHandler.h>
+#include <Wire.h>
+#include <GSON.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <ArduinoJson.h>
 
 
 // Определения и инициализация
@@ -19,9 +24,15 @@
 #define TURBIDITY_CHANNEL 15
 
 
+const char* ssid = "molvinskayaaa";
+const char* password = "yaroslav2016";
+const String apiKey = "9ce0bce380394587a11102931253101"; //API ключ для OpenWeatherMap до 14.01
+
+
 FastBot2 bot;
 OneWire oneWire(ONE_WIRE_BUS);
 CD74HC4067 mux(16, 5, 4, 0);
+ESP8266WebServer server(80);
 
 
 struct DS18B20Sensor {
@@ -44,6 +55,8 @@ DS18B20Sensor ds18b20 = {
 };
 
 
+
+
 struct WiFiConfig {
     const char* ssid;
     const char* password;
@@ -56,11 +69,23 @@ WiFiConfig wifiConfig = {
 };
 
 
+enum BotState {
+    NORMAL,
+    WAITING_FOR_CITY
+};
+
+
+BotState currentState = NORMAL; // Инициализация в нормальное состояние
+String city = ""; // Служебная переменная для хранения города
+
+
 String userName = "";
 String wateringTime = ""; // Хранит время полива в формате "HH:MM"
 bool wateringScheduled = false;
 time_t nextWateringTime = 0;
 int wateringDelay = 0;
+unsigned long previousMillis = 0; // Сохраняет время последнего запроса
+const long interval = 600000; // Интервал между запросами (600000 мс = 10 минут)
 
 
 void printAddress(byte addr[8]) {
@@ -102,8 +127,6 @@ void startMeasurementDS18b20() {
         Serial.println("Measurement started"); // вывод сообщения о начале измерения
     }
 }
-
-
 
 
 void checkBusyDS18B20() {
@@ -153,16 +176,10 @@ String getMuxData() {
     String results = ""; // строка для хранения результатов
     int channels[] = {4, 11, 15}; // каналы для считывания
     String labels[] = {"Содержание солей (TDS)", "Кислотность (pH)", "Мутность (NTU)"}; // Названия показателей
-
-
     for (int i = 0; i < sizeof(channels) / sizeof(channels[0]); i++) {
         int channel = channels[i];
         mux.channel(channel); // выбираем канал
         int value = analogRead(A0); // считываем значение
-
-
-
-
         // Обработка значений в зависимости от канала
         float calibratedValue;
         String alert = "";
@@ -199,7 +216,6 @@ String getMuxData() {
 }
 
 
-
 void checkWateringTime() {
     if (nextWateringTime > 0 && now() >= nextWateringTime) {
         // Отправка уведомления
@@ -211,12 +227,79 @@ void checkWateringTime() {
 }
 
 
+String getWeatherDescription(String englishDescription) {
+    // Функция для перевода описаний погоды
+    if (englishDescription == "Partly cloudy") return "🌤 Частично облачно";
+    if (englishDescription == "Sunny") return "☀️ Солнечно";
+    if (englishDescription == "Overcast") return "☁️ Пасмурно";
+    if (englishDescription == "Rain") return "☔ Дождь";
+    if (englishDescription == "Clear") return "🌞 Ясно";
+    if (englishDescription == "Cloudy") return "☁️ Облачно";
+    if (englishDescription == "Mist") return "🌫️ Мгла";
+    // Добавьте другие переводы по мере необходимости
+    return englishDescription; // Возвращаем оригинальное описание, если перевод не найден
+}
+
+void greetUser() {
+    fb::Message msg("🌼 Здравствуйте! Я ваш помощник по уходу за растениями! Как я могу у вам обращаться?", CHAT_ID);
+    bot.sendMessage(msg);
+}
+
+void getWeather() {
+    if (WiFi.status() == WL_CONNECTED) {
+        WiFiClient client;
+        HTTPClient http;
+
+
+        String url = "http://api.weatherapi.com/v1/current.json?key=" + apiKey + "&q=" + city;
+        Serial.print("Requesting weather data from: ");
+        Serial.println(url);
+
+
+        http.begin(client, url);
+        int httpCode = http.GET();
+
+
+        if (httpCode > 0) {
+            if (httpCode == HTTP_CODE_OK) {
+                String payload = http.getString();
+                Serial.println("Weather data received:");
+                Serial.println(payload);
+
+
+                // Десериализация JSON
+                DynamicJsonDocument doc(1024);
+                DeserializationError error = deserializeJson(doc, payload);
+                if (!error) {
+                    String description = doc["current"]["condition"]["text"].as<String>();
+                    // Использование функции для перевода описания погоды
+                    description = getWeatherDescription(description);
+                    
+                    float temperature = doc["current"]["temp_c"];
+                    String weatherMessage = "☁️Погода в " + city + ": " + description + ", Температура: " + String(temperature) + "°C";
+                    bot.sendMessage(fb::Message(weatherMessage, CHAT_ID));
+                } else {
+                    Serial.println("Failed to parse JSON!"); // Ошибка десериализации
+                }
+            }
+        } else {
+            Serial.printf("Error on HTTP request: %s\n", http.errorToString(httpCode).c_str());
+        }
+        http.end();
+    } else {
+        Serial.println("WiFi not connected");
+    }
+}
+
+
 void updateh(fb::Update& u) {
     if (u.isQuery()) {
         Serial.println("NEW QUERY");
         Serial.println(u.query().data());
         bot.answerCallbackQuery(u.query().id(), "query answered");
         String queryData = String(u.query().data().c_str());
+
+
         if (queryData == "/readings") {
             // Обработка получения показаний
             if (ds18b20.busy) {
@@ -232,7 +315,7 @@ void updateh(fb::Update& u) {
         } else if (queryData == "/notifications") {
             // Обработка кнопки "Уведомления"
             fb::Message msg("Выберите уведомление:", u.query().from().id());
-            fb::InlineMenu menu("Полив ; Добавление субстратов", "watering;add_substrate");
+            fb::InlineMenu menu("Полив ; Добавление субстратов ; Погода", "watering;add_substrate;/weather");
             msg.setInlineMenu(menu);
             bot.sendMessage(msg);
         } else if (queryData == "watering") {
@@ -255,6 +338,82 @@ void updateh(fb::Update& u) {
             time_t nowTime = now();
             nextWateringTime = nowTime + wateringDelay; // Установка следующего времени полива
             bot.sendMessage(fb::Message("Время полива установлено через " + String(wateringDelay / 60) + " минут(ы).", u.query().from().id()));
+        } else if (queryData == "/advice") {
+            // Обработка кнопки "Советы"
+            fb::Message msg("Выберите категорию совета:", u.query().from().id());
+            fb::InlineMenu menu("Температура ; Влажность ; Почва ; Удобрение ; Корни",
+                                "temperature;humidity;soil;fertilizer;roots");
+            msg.setInlineMenu(menu);
+            bot.sendMessage(msg);
+        } else if (queryData == "temperature") {
+            // Советы по температуре
+            String adviceMessage = "🌡️ Температура:\n"
+                            "Оптимальная температура для большинства комнатных растений составляет 20-25°C. "
+                            "Избегайте резких перепадов температуры.";
+            bot.sendMessage(fb::Message(adviceMessage, u.query().from().id()));
+
+
+            // Запрос о полезности совета
+            fb::Message feedbackMsg("Был ли этот совет полезен?", u.query().from().id());
+            fb::InlineMenu feedbackMenu("👍 ; 👎", "helpful;not_helpful");
+            feedbackMsg.setInlineMenu(feedbackMenu);
+            bot.sendMessage(feedbackMsg);
+        } else if (queryData == "humidity") {
+            // Советы по влажности
+            String adviceMessage = "💧 Влажность:\n"
+                                "Комнатные растения предпочитают влажность на уровне 50-70%. "
+                                "Проверьте уровень влажности и используйте увлажнитель, если необходимо.";
+            bot.sendMessage(fb::Message(adviceMessage, u.query().from().id()));
+
+
+            // Запрос о полезности совета
+            fb::Message feedbackMsg("Был ли этот совет полезен?", u.query().from().id());
+            fb::InlineMenu feedbackMenu("👍 ; 👎", "helpful;not_helpful");
+            feedbackMsg.setInlineMenu(feedbackMenu);
+            bot.sendMessage(feedbackMsg);
+        } else if (queryData == "soil") {
+            // Советы по почве
+            String adviceMessage = "🌱 Почва:\n"
+                                "Используйте легкую, хорошо дренированную почву для комнатных растений. "
+                                "Регулярно проверяйте уровень pH для ваших растений.";
+            bot.sendMessage(fb::Message(adviceMessage, u.query().from().id()));
+
+
+            // Запрос о полезности совета
+            fb::Message feedbackMsg("Был ли этот совет полезен?", u.query().from().id());
+            fb::InlineMenu feedbackMenu("👍 ; 👎", "helpful;not_helpful");
+            feedbackMsg.setInlineMenu(feedbackMenu);
+            bot.sendMessage(feedbackMsg);
+        } else if (queryData == "fertilizer") {
+            // Советы по удобрениям
+            String adviceMessage = "🌼 Удобрение:\n"
+                                "Подкармливайте растения каждые 4-6 недель в течение вегетационного периода. "
+                                "Используйте удобрения, сбалансированные по основным микроэлементам.";
+            bot.sendMessage(fb::Message(adviceMessage, u.query().from().id()));
+
+
+            // Запрос о полезности совета
+            fb::Message feedbackMsg("Был ли этот совет полезен?", u.query().from().id());
+            fb::InlineMenu feedbackMenu("👍 ; 👎", "helpful;not_helpful");
+            feedbackMsg.setInlineMenu(feedbackMenu);
+            bot.sendMessage(feedbackMsg);
+        } else if (queryData == "roots") {
+            // Советы по корням
+            String adviceMessage = "🪴 Корни:\n"
+                                "Следите за здоровьем корней вашего растения. "
+                                "Если корни перегружены, пересаживайте растение в новую почву.";
+            bot.sendMessage(fb::Message(adviceMessage, u.query().from().id()));
+
+
+            // Запрос о полезности совета
+            fb::Message feedbackMsg("Был ли этот совет полезен?", u.query().from().id());
+            fb::InlineMenu feedbackMenu("👍 ; 👎", "helpful;not_helpful");
+            feedbackMsg.setInlineMenu(feedbackMenu);
+            bot.sendMessage(feedbackMsg);
+        } else if (queryData == "helpful") {
+            bot.sendMessage(fb::Message("Спасибо за ваш отзыв! Рад, что совет был полезен.", u.query().from().id()));
+        } else if (queryData == "not_helpful") {
+            bot.sendMessage(fb::Message("Спасибо, что сообщили. Мы постоянно улучшаем наши советы!", u.query().from().id()));
         } else if (queryData == "add_substrate") {
             // Обработка кнопки "Добавление субстратов"
             bot.sendMessage(fb::Message("Уведомление о добавлении субстратов установлено.", u.query().from().id()));
@@ -281,15 +440,54 @@ void updateh(fb::Update& u) {
                                 "• В установленное время полива\n"
                                 "• При отклонении показателей от нормы\n\n"
                                 "💬 Для использования просто выберите нужную команду в меню.";
-            
+
+
             bot.sendMessage(fb::Message(helpMessage, u.query().from().id()));
+        } else if (queryData == "/weather") {
+            // Проверяем, установлен ли город
+            if (city == "") {
+                bot.sendMessage(fb::Message("Пожалуйста, введите ваш город:", u.query().from().id()));
+                currentState = WAITING_FOR_CITY; // Устанавливаем состояние ожидания города
+            } else {
+                // Запрос погоды
+                getWeather();
+                // После успешного запроса погоды предлагаем изменить город
+                fb::Message changeCityMsg("Хотите сменить город?", u.query().from().id());
+                fb::InlineMenu changeCityMenu("Сменить город ; Нет", "change_city;no_change");
+                changeCityMsg.setInlineMenu(changeCityMenu);
+                bot.sendMessage(changeCityMsg);
+            }
+        } else if (queryData == "change_city") {
+            bot.sendMessage(fb::Message("Пожалуйста, введите новый город:", u.query().from().id()));
+            currentState = WAITING_FOR_CITY; // Снова устанавливаем состояние ожидания города
+        } else if (queryData == "no_change") {
+            bot.sendMessage(fb::Message("Хорошо, оставим текущий город: " + city, u.query().from().id()));
         }
-    } else {
+        } else {
+            String userMessage = String(u.message().text().c_str());
+        // Проверка, если состояние ожидания города
+            if (currentState == WAITING_FOR_CITY) {
+                city = userMessage; // Сохраняем город, введенный пользователем
+                getWeather(); // Сразу запрашиваем погоду после установки города
+                currentState = NORMAL; // Возвращаемся в нормальное состояние
+                return;
+            }
         // Обработка обычных сообщений
         Serial.println("NEW MESSAGE");
         Serial.println(u.message().from().username());
         Serial.println(u.message().text());
-        String userMessage = String(u.message().text().c_str());
+        //String userMessage = String(u.message().text().c_str());
+
+
+        // Проверка, если состояние ожидания города
+        if (currentState == WAITING_FOR_CITY) {
+            city = userMessage; // Сохраняем город, введенный пользователем
+            bot.sendMessage(fb::Message("Город установлен: " + city + ". Теперь вы можете использовать команду /weather.", u.message().chat().id()));
+            currentState = NORMAL; // Возвращаемся в нормальное состояние
+            return;
+        }
+
+
         if (wateringScheduled) {
             // Обработка времени полива
             int hour, minute;
@@ -317,8 +515,8 @@ void updateh(fb::Update& u) {
             userName = userMessage;
             String welcomeMessage = "Приятно познакомиться, " + userName + "! Выберите:";
             fb::Message msg(welcomeMessage, u.message().chat().id());
-            fb::InlineMenu menu("Показания ; Уведомления ; Советы ; Калибровка ; Статистика ; Обновить ; Помощь",
-                                "/readings;/notifications;/advice;/calibrate;/stats;/refresh;/help");
+            fb::InlineMenu menu("Показания ; Уведомления ; Советы ; Погода ; Статистика ; Обновить ; Помощь",
+                                "/readings;/notifications;/advice;/weather;/stats;/refresh;/help");
             msg.setInlineMenu(menu);
             bot.sendMessage(msg);
         } else {
@@ -328,11 +526,90 @@ void updateh(fb::Update& u) {
 }
 
 
+void handleRoot() {
+    String muxResults = getMuxData(); // Получаем результаты с мультиплексора
+    String html = "<html><head>";
+    html += "<style>";
+    html += "body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f4f4f4; }";
+    html += "h1 { color: #4CAF50; }"; // Цвет заголовка
+    html += "h2 { color: #2196F3; }"; // Цвет второго заголовка
+    html += ".container { max-width: 800px; margin: auto; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); }";
+    html += ".thermometer { width: 50px; height: 300px; background: #e0e0e0; border-radius: 25px; position: relative; margin: 20px auto; }";
+    html += ".thermometer-fill { position: absolute; bottom: 0; width: 100%; border-radius: 25px; }";
+    html += ".temperature-label { position: absolute; left: 1000px; font-size: 24px; color: #4CAF50; margin-top: -60px; }";
+    html += ".results { white-space: pre-wrap; margin-top: 850px; }"; // Пробелы и перенос строк сохраняются
+    html += "table { width: 100%; border-collapse: collapse; margin-top: 20px; }";
+    html += "th, td { border: 1px solid #ccc; padding: 10px; text-align: left; }";
+    html += "th { background-color: #f2f2f2; }";
+    html += "</style></head><body>";
+    html += "<div class='container'>";
+
+
+
+
+    // Вычисление высоты для термометра
+    float temperatureHeight = constrain(ds18b20.temperature * 10, 0, 300);
+    // Определение цвета заполнения термометра в зависимости от температуры
+    String fillColor;
+    if (ds18b20.temperature <= 27) {
+        fillColor = "green"; // до 25°C - зеленый
+    } else if (ds18b20.temperature > 27 && ds18b20.temperature <= 35) {
+        fillColor = "yellow"; // от 25°C до 35°C - желтый
+    } else {
+        fillColor = "red"; // свыше 35°C - красный
+    }
+
+
+    html += "<h1>Данные сенсоров</h1>";
+    html += "<div class='thermometer'>";
+    html += "<div class='thermometer-fill' style='height: " + String(temperatureHeight) + "px; background-color: " + fillColor + ";'></div>"; // Изменяем цвет заполнения
+    html += "</div>";
+    html += "<div class='temperature-label'>" + String(ds18b20.temperature) + " °C</div>";
+
+    // Добавление таблицы для других показателей
+    html += "<h2>Качество воды</h2>";
+    html += "<table>";
+    html += "<tr><th>Показатель</th><th>Значение</th></tr>";
+
+
+
+
+    // Заполнение таблицы (например, вы можете извлекать значения из функции getMuxData)
+    String results = muxResults; // Ваши результаты из getMuxData
+    String lines[3];
+    int lineCount = 0;
+
+
+
+
+    // Разбиваем полученные результаты на строки для таблицы
+    int startIndex = 0;
+    while (startIndex < results.length()) {
+        int endIndex = results.indexOf("\n", startIndex);
+        if (endIndex == -1) endIndex = results.length();
+        lines[lineCount] = results.substring(startIndex, endIndex);
+        startIndex = endIndex + 1;
+        lineCount++;
+    }
+    // Обработка каждой строки для отображения в таблице
+    for (int i = 0; i < lineCount; i++) {
+        String label = lines[i].substring(0, lines[i].indexOf(":")); // Название показателя
+        String value = lines[i].substring(lines[i].indexOf(":") + 1); // Значение показателя
+        html += "<tr><td>" + label + "</td><td>" + value + "</td></tr>";
+    }
+
+
+    html += "</table>"; // Закрытие таблицы
+    html += "</div>"; // Закрываем контейнер
+    html += "</body></html>";
+    server.send(200, "text/html; charset=UTF-8", html);
+}
+
 
 
 void setup() {
     Serial.begin(9600);
-    WiFi.begin(wifiConfig.ssid, wifiConfig.password);
+    WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
@@ -342,35 +619,42 @@ void setup() {
     Serial.println(WiFi.localIP());
 
 
-
-
-    setupDS18b20();
+    ds18b20.setup();
     bot.attachUpdate(updateh);
-    bot.setToken(F(BOT_TOKEN));
+    bot.setToken(BOT_TOKEN);
     bot.setPollMode(fb::Poll::Long, 20000);
-    fb::Message msg("Привет! Как я могу к вам обращаться?", CHAT_ID);
-    bot.sendMessage(msg);
+    greetUser();
+    server.on("/", handleRoot); // Установка маршрута на корень
+    server.begin();
 
 
-
-
+    getWeather(); // Первоначальный запрос погоды
 }
 
 
+
+
 void loop() {
+    server.handleClient();
     if (!ds18b20.busy) {
-        startMeasurementDS18b20();
+        ds18b20.start();
     }
     checkBusyDS18B20();
-
-
 
 
     if (!ds18b20.busy) {
         getDataDS18B20();
     }
-    String muxResults = getMuxData();
-    Serial.print(muxResults);
+
+
+    // Периодический запрос данных о погоде
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval) {
+        previousMillis = currentMillis; // обновляем время последнего запроса
+        getWeather(); // вызываем запрос к API с погодой
+    }
+
+
     checkWateringTime();
     delay(3000);
     bot.tick();
